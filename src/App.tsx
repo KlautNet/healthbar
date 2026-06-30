@@ -1,27 +1,61 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import "./App.css";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+
+type Status = "unknown" | "up" | "down" | "degraded";
+
+type Target = {
+  id: string;
+  name: string;
+  check: {
+    type: "http" | "tcp";
+    url?: string;
+    expected_status?: number;
+    host?: string;
+    port?: number;
+  };
+  interval_secs: number;
+  timeout_ms: number;
+};
+
+type StatusUpdate = {
+  id: string;
+  status: Status;
+  message: string | null;
+};
 
 function App() {
-  const [uptime, setUptime] = useState<string | null>(null);
+  const [targets, setTargets] = useState<Target[]>([]);
+  const [statuses, setStatuses] = useState<Record<string, Status>>({});
+  useEffect(() => {
+    invoke<Target[]>("list_targets").then((targets) => {
+      setTargets(targets);
+    });
 
-  const fetchUptime = async () => {
-    try {
-      const result = await invoke<string>("get_uptime");
-      setUptime(result);
-    } catch (error) {
-      console.error("Error fetching uptime:", error);
-    }
-  };
+    const unlisten = listen<StatusUpdate>("status-changed", (event) => {
+      console.log("Received event:", event.payload);
+      setStatuses((prev) => ({
+        ...prev,
+        [event.payload.id]: event.payload.status,
+      }));
+    });
 
-  // Fetch uptime when the component mounts
-  useState(() => {
-    fetchUptime();
-  });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
 
   return (
-    <main className="container">
-      <p>{uptime}</p>
+    <main className="panel">
+      <h1>Healthbar Status</h1>
+      <ul>
+        {targets.map((target) => (
+          <li key={target.id}>
+            {target.name}: {statuses[target.id] || "unknown"}
+          </li>
+        ))}
+      </ul>
     </main>
   );
 }
